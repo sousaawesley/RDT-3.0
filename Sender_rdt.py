@@ -12,14 +12,34 @@ class Sender:
         self.sender_port = self.sender_socket.getsockname()[1]
         self.seq_alternate = False
         self.__identify_sender()
+        self.timer = 3
 
     def rdt_send(self, data):
         packet = self.__pack_data(data)
         self.__udt_send(packet)
-        self.__start_timer()
 
-    def rdt_rcv(self, pkt):
-        pass
+        self.sender_socket.settimeout(2)
+        self.listem(packet)
+
+    def listem(self, packet):
+        while True:
+            try:
+                ack_packet, __ = self.sender_socket.recvfrom(1024)
+                ack_seq = struct.unpack("!HHBH", ack_packet)[2]
+                
+                if ack_seq == 1 ^ (int(self.seq_alternate)):
+                    print(f"ACK received for sequence number: {ack_seq}")
+                    break
+                else:
+                    print(f"Unexpected ACK received, expected: {1 ^ (int(self.seq_alternate))}, got: {ack_seq}")
+                    self.__udt_send(packet)
+                    self.sender_socket.settimeout(self.timer)
+            
+            except socket.timeout:
+                print(f"Timeout waiting for ACK{1 ^ (int(self.seq_alternate))}")
+                self.__udt_send(packet)
+                self.sender_socket.settimeout(self.timer)
+    
 
     def __pack_data(self,data):
         encoded_data = data.encode()
@@ -57,15 +77,9 @@ class Sender:
     def __udt_send(self, pkt):
         self.sender_socket.sendto(pkt, self.dest)
 
-    def __start_timer(self):
-        pass
-
     def __identify_sender(self):
         initial_packet = struct.pack("!B", 1)
         self.sender_socket.sendto(initial_packet, self.dest)
 
-    def __ack_receiver(self):
-        identifier = struct.unpack("!B", packet[:1])[0]
-        self.sender_socket.sendto(initial_packet, self.dest)
 
 sender_instance = Sender()

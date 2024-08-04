@@ -11,36 +11,75 @@ class Sender:
         self.sender_socket.bind(('', 0))
         self.sender_port = self.sender_socket.getsockname()[1]
         self.seq_alternate = False
+        self.expected_ack_seq = 0
         self.__identify_sender()
-        self.timer = 3
+        self.timer = 2
+        self.colors = ['\033[0m', '\033[92m', '\033[33m', '\033[91m']
 
     def rdt_send(self, data):
         packet = self.__pack_data(data)
         self.__udt_send(packet)
-
         self.sender_socket.settimeout(2)
         self.listem(packet)
 
     def listem(self, packet):
         while True:
             try:
+                
                 ack_packet, __ = self.sender_socket.recvfrom(1024)
+                self.expected_ack_seq = self.unpack(packet)[0][2]
                 ack_seq = struct.unpack("!HHBH", ack_packet)[2]
                 
-                if ack_seq == 1 ^ (int(self.seq_alternate)):
-                    print(f"ACK received for sequence number: {ack_seq}")
-                    break
-                else:
-                    print(f"Unexpected ACK received, expected: {1 ^ (int(self.seq_alternate))}, got: {ack_seq}")
+                if  self.__not_corrupted(ack_packet):
+                    
+                    if ack_seq == self.expected_ack_seq:
+                        print(f"\n{self.colors[1]}[INFO]{self.colors[0]} ACK received for sequence number: {ack_seq}")
+                        break
+                    else:
+                        print(f"\n{self.colors[2]}[WARNING]{self.colors[0]} Unexpected sequence number received."
+                            f"    Expected : {self.expected_ack_seq}\n"
+                            f"    Got: {ack_seq}\n")
+                        self.__udt_send(packet)
+                        self.sender_socket.settimeout(self.timer)
+                else: 
                     self.__udt_send(packet)
                     self.sender_socket.settimeout(self.timer)
-            
+
             except socket.timeout:
-                print(f"Timeout waiting for ACK{1 ^ (int(self.seq_alternate))}")
+                print(f"\n{self.colors[3]}[ERROR]{self.colors[0]} Timeout waiting for ACK {self.expected_ack_seq}")
                 self.__udt_send(packet)
                 self.sender_socket.settimeout(self.timer)
-    
 
+    def __create_ack(self, receiver_port, server_port, last_valid_seq_number):
+        ack_header_no_cksuum = struct.pack("!HHBH", receiver_port, server_port, last_valid_seq_number, 0)
+        return ack_header_no_cksuum
+    
+    def unpack(self,packet):
+        udp_header = packet[:9]
+        data = packet[9:]
+        udp_header = struct.unpack("!HHBHH", udp_header)
+        return udp_header, data
+    
+    def ack_checksum_calculator(self, packet):
+        ack = struct.unpack("!HHBH", packet)
+        ack_without_cksum = self.__create_ack(ack[0], ack[1], ack[2])
+        return self.__checksum_calculator(ack_without_cksum)
+    
+    def __not_corrupted(self, packet):
+        received_checksum = struct.unpack("!HHBH", packet)[3]
+        calculated_checksum = self.ack_checksum_calculator(packet)
+        
+        print("[INFO] Packet Integrity Check:")
+        print(f"  - Received checksum: {received_checksum}")
+        print(f"  - Calculated checksum: {calculated_checksum}")
+        
+        if calculated_checksum == received_checksum:
+            print(f"  - Ack checksum is {self.colors[1]}not corrupted.{self.colors[0]}\n")
+            return True
+        
+        print(f"  - Ack checksum is {self.colors[3]}corrupted.{self.colors[0]}\n")
+        return False
+        
     def __pack_data(self,data):
         encoded_data = data.encode()
         data_length = len(data)

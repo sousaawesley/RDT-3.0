@@ -21,7 +21,9 @@ class Server:
         self.logs = []
         self.logs_lock = Lock()
         self.__identify_clients()
-
+        self.corruption_limit = 2
+        self.corrupted_packet_count = 0
+        
     def __identify_clients(self):
         while self.sender_address is None or self.receiver_address is None:
             packet, sender_address = self.listen_socket.recvfrom(1024)
@@ -56,60 +58,66 @@ class Server:
                 dest_address = self.receiver_address if sender_address == self.sender_address else self.sender_address
                 
                 if sender_address == self.sender_address:
-                    log = self.simulate_net_sndr_conditions(packet, dest_address)
+                    self.simulate_net_sndr_conditions(packet, dest_address)
                 else:
-                    log = self.simulate_net_rcv_conditions(packet, dest_address)
+                    self.simulate_net_rcv_conditions(packet, dest_address)
 
-                self.add_log(log)
-                
             except socket.error as e:
                 self.add_log(f"Socket error: {e}")
 
     def simulate_net_rcv_conditions(self, packet, dest_address):
         decision = self.get_net_rcv_condition()
-        log = f"Network rcv condition: {decision}\n"
+        log = f"Network rcv condition: {decision}"
+        self.add_log(log)
 
         if decision == "drop":
-            log += "Ack dropped\n"
+            self.add_log("\nAck dropped\n")
         
-        if decision == "corrupt":
+        if decision == "corrupt" and self.corrupted_packet_count < self.corruption_limit:
             packet = self.corrupt_checksum_ack(packet)
             self.forward_packet(packet, dest_address)
-            log += "Ack corrupted and sent\n"
+            self.corrupted_packet_count += 1
+            self.add_log("\nAck corrupted and sent\n")
+            if self.corrupted_packet_count >= self.corruption_limit:
+                self.corrupted_packet_count = 0
+                self.set_net_rcv_condition("pass")
         
         if decision == "delay":
             time.sleep(self.delay)
             self.forward_packet(packet, dest_address)
-            log += "Ack delayed and sent\n"
+            self.add_log("\nAck delayed and sent\n")
         
         if decision == "pass":
             self.forward_packet(packet, dest_address)
-            log += "Ack sent\n"
+            self.add_log("\nAck sent\n")
         
-        return log
 
     def simulate_net_sndr_conditions(self, packet, dest_address):
         decision = self.get_net_sndr_condition()
-        log = f"Network sndr condition: {decision}\n"
+        log = f"Network sndr condition: {decision}"
+        self.add_log(log)
         
         if decision == "drop":
-            log += "Packet dropped\n"
+            self.add_log("\nPacket dropped\n")
         
-        if decision == "corrupt":
+        if decision == "corrupt" and self.corrupted_packet_count < self.corruption_limit:
             packet = self.corrupt_checksum_pkt(packet)
             self.forward_packet(packet, dest_address)
-            log += "Packet corrupted and sent\n"
+            self.corrupted_packet_count += 1
+            self.add_log("\nPacket corrupted and sent\n")
+            if self.corrupted_packet_count >= self.corruption_limit:
+                self.corrupted_packet_count = 0
+                self.set_net_sndr_condition("pass")
         
         if decision == "delay":
             time.sleep(self.delay)
             self.forward_packet(packet, dest_address)
-            log += "Packet delayed and sent\n"
+            self.add_log("\nPacket delayed and sent\n")
         
         if decision == "pass":
             self.forward_packet(packet, dest_address)
-            log += "Packet sent\n"
+            self.add_log("\nPacket sent\n")
         
-        return log
 
     def forward_packet(self, packet, address):
         self.forward_socket.sendto(packet, address)

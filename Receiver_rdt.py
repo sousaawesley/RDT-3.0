@@ -13,6 +13,8 @@ class Receiver:
         self.seq_number = 0
         self.seq_alternate = False
         self.__identify_receiver()
+        self.colors = ['\033[0m', '\033[92m', '\033[33m', '\033[91m']
+        
 
     def rdt_send(self, data):
         packet = self.__pack_data(data)
@@ -46,19 +48,34 @@ class Receiver:
         return ~s & 0xffff
 
     def __not_corrupted(self, packet):
-        checksum = self.unpack(packet)[0][4]
-        checksum_calculated = self.pkt_checksum_calculator(packet)
-        print(f"Checksum received: {checksum}, Checksum calculated: {checksum_calculated}")
-        return checksum_calculated == checksum
+        received_checksum = self.unpack(packet)[0][4]
+        calculated_checksum = self.pkt_checksum_calculator(packet)
+
+        print("[INFO] Packet Integrity Check:")
+        print(f"  - Received checksum: {received_checksum}")
+        print(f"  - Calculated checksum: {calculated_checksum}")
+        
+        if calculated_checksum == received_checksum:
+            print(f"  - Packet is {self.colors[1]}not corrupted.{self.colors[0]}\n")
+            return True
+        
+        print(f"  - Packet is {self.colors[3]}corrupted.{self.colors[0]}\n")
+        return False
+        
     
     def check_seq(self, packet):
         pkt_seq = self.unpack(packet)[0][2]
-        print(f"Sequence number received: {pkt_seq}, Expected sequence number: {self.seq_number}")
+       
+        print("[INFO] Sequence Number Check:")
+        print(f"  - Sequence number received: {pkt_seq}")
+        print(f"  - Expected sequence number: {self.seq_number}")
 
         if pkt_seq == self.seq_number:
+            print(f"  - Sequence number is {self.colors[1]}correct.{self.colors[0]}\n")
             self.seq_number ^= 1
             return True
         
+        print(f"  - Sequence number is {self.colors[3]}incorrect.\n{self.colors[0]}")
         return False
 
     def pkt_checksum_calculator(self, packet):
@@ -86,20 +103,22 @@ class Receiver:
 
             if self.__not_corrupted(packet):
            
-                if pkt_seq == self.seq_number:
+                if self.check_seq(packet):
                    
-                    self.seq_number ^= 1 
                     last_valid_seq_number = pkt_seq 
-                    print(f"Received valid packet from: {unpack[0][0]}")
-                    print(f"Number seq: {pkt_seq}")
-                    print(f"Message: {unpack[1].decode()}")
+                    print(f"[INFO] Received valid packet from: {unpack[0][0]}")
+                            #f"Number seq: {pkt_seq}\n
+                    print(f"    MESSAGE: {unpack[1].decode()}\n")
+                    ack_packet = self.__create_ack(last_valid_seq_number)
+                    self.receiver_socket.sendto(ack_packet, self.dest)
                 else:
-                    print(f"Received packet with incorrect sequence number: {pkt_seq}")
+                    print(f"[WARNING] Received packet with incorrect sequence number: {pkt_seq}\n")
+                    ack_packet = self.__create_ack(last_valid_seq_number)
+                    self.receiver_socket.sendto(ack_packet, self.dest)
             else:
-                print("Received corrupted packet.")
-
-            ack_packet = self.__create_ack(last_valid_seq_number)
-            self.receiver_socket.sendto(ack_packet, self.dest)
+                print(f"\n{self.colors[3]}[ERROR]{self.colors[0]} Received {self.colors[3]}corrupted{self.colors[0]} packet.\n")
+                ack_packet = self.__create_ack(last_valid_seq_number)
+                self.receiver_socket.sendto(ack_packet, self.dest)
         
     def __create_ack(self, last_valid_seq_number):
         ack_header_no_cksuum = struct.pack("!HHBH", self.receiver_port, self.server_port, last_valid_seq_number, 0)

@@ -1,95 +1,118 @@
-from cursesmenu import CursesMenu
-from cursesmenu.items import FunctionItem, SubmenuItem
-from Server import Server
+import curses
 import threading
 import time
+from Server import Server
+from collections import deque
 
 class ServerMenu:
-    def __init__(self):
+    def __init__(self, stdscr):
+        self.stdscr = stdscr
+        self.height, self.width = stdscr.getmaxyx()
+
+
+        self.control_win = curses.newwin(self.height, self.width // 2, 0, 0)
+        self.log_win = curses.newwin(self.height, self.width // 2, 0, self.width // 2)
+
+        self.control_win.box()
+        self.log_win.box()
+
         self.server = Server()
-        self.main_menu = CursesMenu("Server Menu", "Control and Monitor Server")
-        
-        self.sender_conditions_menu = CursesMenu("Sender Network Conditions", "Select a Network Condition for Sender")
-        self.receiver_conditions_menu = CursesMenu("Receiver Network Conditions", "Select a Network Condition for Receiver")
-        self.logs_menu = CursesMenu("Server Logs", "View Server Logs")
-
-        self.add_main_menu_items()
-        self.add_sender_conditions_menu_items()
-        self.add_receiver_conditions_menu_items()
-        self.add_logs_menu_items()
-
-        # Start server in a separate thread
         self.server_thread = threading.Thread(target=self.server.listen, daemon=True)
         self.server_thread.start()
 
-        # Start log updater in a separate thread
-        self.log_updater_thread = threading.Thread(target=self.update_logs, daemon=True)
-        self.log_updater_thread.start()
+        self.logs = deque(maxlen=self.height - 2)
 
-    def add_main_menu_items(self):
-        self.main_menu.items.append(SubmenuItem("Sender Network Conditions", self.sender_conditions_menu))
-        self.main_menu.items.append(SubmenuItem("Receiver Network Conditions", self.receiver_conditions_menu))
-        self.main_menu.items.append(SubmenuItem("View Server Logs", self.logs_menu))
-        self.main_menu.items.append(FunctionItem("Exit", self.exit))
+        self.update_logs_thread = threading.Thread(target=self.update_logs, daemon=True)
+        self.update_logs_thread.start()
 
-    def add_sender_conditions_menu_items(self):
-        self.sender_conditions_menu.items.append(FunctionItem("Set Sender Condition to Drop", self.set_sender_condition, args=("drop",)))
-        self.sender_conditions_menu.items.append(FunctionItem("Set Sender Condition to Corrupt", self.set_sender_condition, args=("corrupt",)))
-        self.sender_conditions_menu.items.append(FunctionItem("Set Sender Condition to Delay", self.set_sender_condition, args=("delay",)))
-        self.sender_conditions_menu.items.append(FunctionItem("Set Sender Condition to Pass", self.set_sender_condition, args=("pass",)))
-        self.sender_conditions_menu.items.append(FunctionItem("Back to Main Menu", self.back_to_main_menu))
+        self.main_menu()   
 
-    def add_receiver_conditions_menu_items(self):
-        self.receiver_conditions_menu.items.append(FunctionItem("Set Receiver Condition to Drop", self.set_receiver_condition, args=("drop",)))
-        self.receiver_conditions_menu.items.append(FunctionItem("Set Receiver Condition to Corrupt", self.set_receiver_condition, args=("corrupt",)))
-        self.receiver_conditions_menu.items.append(FunctionItem("Set Receiver Condition to Delay", self.set_receiver_condition, args=("delay",)))
-        self.receiver_conditions_menu.items.append(FunctionItem("Set Receiver Condition to Pass", self.set_receiver_condition, args=("pass",)))
-        self.receiver_conditions_menu.items.append(FunctionItem("Back to Main Menu", self.back_to_main_menu))
+    def main_menu(self):
+        
+        self.set_null_condition()
 
-    def add_logs_menu_items(self):
-        self.logs_menu.items.append(FunctionItem("Show Logs", self.show_logs))
-        self.logs_menu.items.append(FunctionItem("Back to Main Menu", self.back_to_main_menu))
+        while True:
+            self.control_win.clear()
+            self.control_win.box()
+            self.control_win.addstr(1, 1, "Sender Network Conditions")
+            self.control_win.addstr(2, 1, "1. Set Sender Condition to Drop")
+            self.control_win.addstr(3, 1, "2. Set Sender Condition to Corrupt")
+            self.control_win.addstr(4, 1, "3. Set Server Condition to Delay")
+            self.control_win.addstr(5, 1, "4. Set Sender Condition to Pass")
+            self.control_win.addstr(6, 1, "5. Set Receiver Condition to Drop")
+            self.control_win.addstr(7, 1, "6. Set Receiver Condition to Corrupt")
+            self.control_win.addstr(8, 1, "7. Set Receiver Condition to Pass")
+            self.control_win.addstr(9, 1, "8. Exit")
+
+            key = self.stdscr.getch()
+            self.handle_menu_input(key)
+
+    def handle_menu_input(self, key):
+        
+        if key == ord('0'):
+            self.set_null_condition()
+        if key == ord('1'):
+            self.set_sender_condition("drop")
+        if key == ord('2'):
+            self.set_sender_condition("corrupt")
+        if key == ord('3'):
+            self.set_sender_condition("delay")
+        if key == ord('4'):
+            self.set_sender_condition("pass")
+        
+        #receiver
+        if key == ord('5'):
+            self.set_receiver_condition("drop")
+        if key == ord('6'):
+            self.set_receiver_condition("corrupt")
+        if key == ord('7'):
+            self.set_receiver_condition("pass")
+        if key == ord('8'):
+            curses.endwin()
+            exit(0)
+
+            
+
+    def set_null_condition(self):
+        try:
+            self.control_win.addstr(self.height - 1, 1, f" [SERVER MENU] ", curses.A_BOLD)
+        except ValueError as e:
+            self.control_win.addstr(self.height - 1, 1, str(e), curses.A_BOLD)
+        self.control_win.refresh()
 
     def set_sender_condition(self, condition):
         try:
             self.server.set_net_sndr_condition(condition)
-            print(f"Sender network condition set to: {condition}")
+            self.control_win.addstr(self.height - 1, 1, f" [SERVER MENU] Sender network condition set to: {condition}", curses.A_BOLD)
         except ValueError as e:
-            print(e)
+            self.control_win.addstr(self.height - 1, 1, str(e), curses.A_BOLD)
+        self.control_win.refresh()
 
     def set_receiver_condition(self, condition):
         try:
             self.server.set_net_rcv_condition(condition)
-            print(f"Receiver network condition set to: {condition}")
+            self.control_win.addstr(self.height - 1, 1, f" [SERVER MENU] Receiver network condition set to: {condition}", curses.A_BOLD)
         except ValueError as e:
-            print(e)
-
-    def show_logs(self):
-        pass
+            self.control_win.addstr(self.height - 1, 1, str(e), curses.A_BOLD)
+        self.control_win.refresh()
 
     def update_logs(self):
         while True:
-            logs = self.server.get_logs()
-            if logs:
-                # Clear screen and update with new logs
-                self.logs_menu.clear()
-                for log in logs:
-                    self.logs_menu.add_item(FunctionItem(log, self.inut))
-            time.sleep(5)  # Update every 5 seconds
+            new_logs = self.server.get_logs()
 
-    def inut(self):
-        pass
+            self.logs.clear()
+            self.logs.extend(new_logs)
 
-    def exit(self):
-        print("Exiting...")
-        exit(0)
+            self.log_win.clear()
+            self.log_win.box()
+            for i, log in enumerate(self.logs):
+                self.log_win.addstr(i + 1, 1, log)
+            self.log_win.refresh()
 
-    def back_to_main_menu(self):
-        self.main_menu.show()
+            time.sleep(2) 
 
-    def start(self):
-        self.main_menu.show()
+def main(stdscr):
+    curses.curs_set(0)
+    menu = ServerMenu(stdscr)
 
-if __name__ == "__main__":
-    server_menu = ServerMenu()
-    server_menu.start()
+curses.wrapper(main)
